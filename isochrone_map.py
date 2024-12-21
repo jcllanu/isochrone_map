@@ -8,13 +8,64 @@ Created on Fri Dec  6 15:27:01 2024
 
 import pandas as pd
 import numpy as np
-#import random
+import matplotlib.pyplot as plt
 import json
 import folium
 import matplotlib.cm as cm
 import matplotlib.colors as colors
 import math
 
+
+class Polygon:
+    
+    def __init__(self,vertexes):
+        self.vertexes = vertexes
+        self.sides = len(vertexes)
+        
+    def edges(self):
+        edges=[]
+        for i in range(self.sides):
+            edges.append(Segment(self.vertexes[i],self.vertexes[(i+1)%self.sides]))
+        return edges
+    
+class Segment:
+    def __init__(self,origin, end):
+        self.origin=origin
+        self.end=end
+    def intersectsSegment(self,other):
+        (x1,y1)=self.origin
+        (u1,v1)=self.end
+        # equation of the first segment: (u1 + t*(x1-u1), v1 + t*(y1-v1)), t in [0,1]
+        (x2,y2)=other.origin
+        (u2,v2)=other.end
+        # equation of the second segment: (u2 + s*(x2-u2), v2 + s*(y2-v2)), s in [0,1]
+        
+        a = np.array([[x1-u1, u2-x2], [y1-v1, v2-y2]])
+        b = np.array([u2-u1, v2-v1])
+        try:
+            x=np.linalg.solve(a,b)
+        except:
+            return (False, 0)
+        else:
+            if 0 <= x[0] and 0 <= x[1] and x[0] <= 1 and x[1] <= 1:
+                return (True, x[0])
+            else:
+                return (False, 0)
+            
+    def intersectsPolygon(self,polygon):
+        minimum=2
+        segment_int=[]
+        for segment in polygon.edges():
+            intersection = self.intersectsSegment(segment)
+            if intersection[0]:
+                if intersection[1] < minimum:
+                    minimum = intersection[1]
+                    segment_int=segment
+        if minimum==2:
+            return (False,[])
+        else:
+            return (True,segment_int)
+        
 norm = colors.Normalize(vmin=0, vmax=600)
 f2rgb = cm.ScalarMappable(norm=norm, cmap=cm.get_cmap('magma'))
 
@@ -42,7 +93,21 @@ def radian2degree(radians):
 def degree2radian(degrees):
     return degrees*math.pi/180
 
+def radial_projection(x,y,z):
+    return (y/x, z/x)
 
+def parallel_projection(x,y,z):
+    return (y, z)
+
+#Transform polar coordinates to cartesian coordinates
+def polar2cartesian(r, alpha):
+    return (r*math.cos(alpha), r*math.sin(alpha))
+
+#Transform cartesian coordinates to polar coordinates
+def cartesian2polar(x,y):
+    r=math.sqrt(x**2+y**2)
+    alpha = np.arctan2(y, x)
+    return(r, alpha)
 
 #Transform spherical coordinates to cartesian coordinates
 def spherical2cartesian(r, latitude, longitude):
@@ -126,6 +191,7 @@ coordinates_origin=[float(data[origin_airport]['latitude']),float(data[origin_ai
     
 mapa = folium.Map(location=coordinates_origin, zoom_start=8)
 
+# draw origin
 folium.CircleMarker(location=coordinates_origin,
                         radius=2,
                         color="#7aff33",
@@ -136,13 +202,15 @@ distances={}
 for destination in data[origin_airport]['routes']:
     coordinates_destination=[float(data[destination['iata']]['latitude']), float(data[destination['iata']]['longitude'])]
     
+    # draw line from origin to destination
     # folium.PolyLine(
     # locations=[coordinates_origin, coordinates_destination],
     # color="#FF0000",
     # weight=5,
     # tooltip="From "+data[origin_airport]['city_name']+" to "+data[destination['iata']]['city_name']
     # ).add_to(mapa)
-   
+    
+    # draw destination point
     # folium.CircleMarker(location=coordinates_destination,
     #                     color=f2hex(f2rgb, destination['min']),
     #                     radius=1,
@@ -156,40 +224,100 @@ for destination in data[origin_airport]['routes']:
       
 draw_parallels(mapa)
 draw_meridians(mapa)
-draw_distances_to_origin(degree2radian(coordinates_origin[0]) ,degree2radian(coordinates_origin[1]), mapa)
+# draw_distances_to_origin(degree2radian(coordinates_origin[0]) ,degree2radian(coordinates_origin[1]), mapa)
 
-# locations=[]
-# for same_distance in distances:
-    
-#         angles={}
-#         for airport in distances[same_distance]:
-#             coordinates_destination=[float(data[airport]['latitude']), float(data[airport]['longitude'])]
-#             coordinates_destination2=[coordinates_destination[0]-coordinates_origin[0], coordinates_destination[1]-coordinates_origin[1]]
-#             angles[airport] = math.atan2(coordinates_destination2[0],coordinates_destination2[1])
+perimeter=[]
+XY_plane={}
+polygon=[]
+
+sorted_distances = dict(sorted(distances.items(), key=lambda item: item[0]))
+for same_distance in sorted_distances:
+    if same_distance < 6:
+        angles={}
+        for airport in distances[same_distance]:
+            coordinates_destination=[float(data[airport]['latitude']),float(data[airport]['longitude'])]
             
-#         sorted_airports = dict(sorted(angles.items(), key=lambda item: item[1]))
+            folium.CircleMarker(
+            location=coordinates_destination,
+            color="red",
+            tooltip=airport,
+            radius=2,
+            weight=5,
+            ).add_to(mapa)
+            
+            # apply rotation that moves the origin to (x,y,z)=(1,0,0)
+            (x,y,z)=spherical2cartesian(1, degree2radian(coordinates_destination[0]), degree2radian(coordinates_destination[1]))
+            (x1,y1,z1)=rot_fix_z(-degree2radian(coordinates_origin[1]),x,y,z)
+            (x2,y2,z2)=rot_fix_y(-degree2radian(coordinates_origin[0]),x1,y1,z1)
+            
+            (u,v)=radial_projection(x2,y2,z2)
+            (rho,alpha)=cartesian2polar(u,v)
+            angles[airport]=alpha
+            XY_plane[airport]=(u,v)
+            
+            (r, latitude2_rad, longitude2_rad)=cartesian2spherical(x2,y2,z2)
+            
+            folium.CircleMarker(
+            location=[radian2degree(latitude2_rad),radian2degree(longitude2_rad)],
+            color="red",
+            tooltip=airport,
+            radius=2,
+            weight=5,
+            ).add_to(mapa)
+            
+        sorted_airports = dict(sorted(angles.items(), key=lambda item: item[1]))
+        x_coords=[XY_plane[airport][0] for airport in sorted_airports]
+        y_coords=[XY_plane[airport][1] for airport in sorted_airports] 
+        plt.plot(x_coords, y_coords, 'o')  
+        for i, label in enumerate(sorted_airports.items()):
+            plt.text(x_coords[i], y_coords[i], label[0], fontsize=12, ha='right')
+        plt.show()                           
+        if len(perimeter)==0:
+            perimeter=sorted_airports
+            polygon=Polygon([XY_plane[airport] for airport in sorted_airports])
+        else:
+            new_perimeter=[]
+            for airport in sorted_airports:
+                # if airport inside perimeter:
+                #     continue
+                if len(new_perimeter)>0:
+                    segment=Segment(XY_plane[new_perimeter[-1]], XY_plane[airport])
+                    intersects=segment.intersectsPolygon(polygon)
+                    
+                    if intersects[0]:
+                        print("HOLA")
+                    else:
+                        new_perimeter.append(airport)
+                else:
+                    new_perimeter.append(airport)
+            perimeter=new_perimeter
+            
+        
+
+  
+        # sorted_airports = dict(sorted(angles.items(), key=lambda item: item[1]))
         
         
-#         locations.append([])
-#         i=1
-#         for airport in sorted_airports:
-#             coordinates_destination=[float(data[airport]['latitude']), float(data[airport]['longitude'])]
-#             folium.CircleMarker(location=coordinates_destination,
-#                                   tooltip=str(i),
-#                                   radius=1,
-#                                   weight=5).add_to(mapa)
+        # locations.append([])
+        # i=1
+        # for airport in sorted_airports:
+        #     coordinates_destination=[float(data[airport]['latitude']), float(data[airport]['longitude'])]
+        #     folium.CircleMarker(location=coordinates_destination,
+        #                           tooltip=str(i),
+        #                           radius=1,
+        #                           weight=5).add_to(mapa)
             
-#             i=i+1
-#             locations[len(locations)-1].append(coordinates_destination)
-#         # folium.Polygon(
-#         #     locations=locations[len(locations)-1],
-#         #     color="blue",
-#         #     weight=1,
-#         #     fill_color="red",
-#         #     fill_opacity=0.01,
-#         #     fill=True,
-#         #     tooltip=str(same_distance*15)+"min"
-#         # ).add_to(mapa)
+        #     i=i+1
+        #     locations[len(locations)-1].append(coordinates_destination)
+        # folium.Polygon(
+        #     locations=locations[len(locations)-1],
+        #     color="blue",
+        #     weight=1,
+        #     fill_color="red",
+        #     fill_opacity=0.01,
+        #     fill=True,
+        #     tooltip=str(same_distance*15)+"min"
+        # ).add_to(mapa)
    
 # folium.CircleMarker(location=coordinates_destination,
 #                       radius=1,
@@ -208,5 +336,5 @@ draw_distances_to_origin(degree2radian(coordinates_origin[0]) ,degree2radian(coo
 
 
 
-
+        
 mapa.save("map.html")
