@@ -15,7 +15,8 @@ import matplotlib.cm as cm
 import matplotlib.colors as colors
 import math
 
-
+TIME_INTERVAL=15
+ORIGIN_AIRPORT='MAD'
 class Polygon:
     
     def __init__(self,vertexes):
@@ -122,6 +123,9 @@ class Segment:
 norm = colors.Normalize(vmin=0, vmax=600)
 f2rgb = cm.ScalarMappable(norm=norm, cmap=cm.get_cmap('magma'))
 
+def min2hours(minutes):
+    return (minutes//60, minutes%60)
+
 def unique_values(l):
     unique_values = []
     for value in l:
@@ -220,10 +224,10 @@ def draw_meridians(mapa):
 
 # Draws lines that are at the same distance from a given point (like parallels are at the same distance from the North Pole).
 def draw_distances_to_origin(latitude_rad, longitude_rad, mapa):
-    for i in range(19):
+    for i in range(10):
         x=math.cos(degree2radian(i*10))
         coor=[]
-        for angle in np.arange(0,2*math.pi,0.01):
+        for angle in np.arange(0,2*math.pi,0.005):
             (x,y,z)=(x,(1-x**2)*math.cos(angle),(1-x**2)*math.sin(angle))
             (x1,y1,z1)=rot_fix_y(latitude_rad,x,y,z)
             (x2,y2,z2)=rot_fix_z(longitude_rad,x1,y1,z1)
@@ -234,8 +238,8 @@ def draw_distances_to_origin(latitude_rad, longitude_rad, mapa):
             location=[radian2degree(latitude2_rad),radian2degree(longitude2_rad)],
             color="red",
             tooltip=str(i),
-            radius=2,
-            weight=5,
+            radius=1,
+            weight=2,
             ).add_to(mapa)
 
   
@@ -250,7 +254,7 @@ airports = airports.set_index('Country Name').join(continents.set_index('Country
 
 
 
-origin_airport='FRA'
+origin_airport=ORIGIN_AIRPORT
 coordinates_origin=[float(data[origin_airport]['latitude']),float(data[origin_airport]['longitude'])]
     
 
@@ -272,7 +276,7 @@ for destination in data[origin_airport]['routes']:
     #                     color=f2hex(f2rgb, destination['min']),
     #                     radius=1,
     #                     weight=5).add_to(mapa)
-    d=destination['min']//30
+    d=destination['min']//TIME_INTERVAL
     distance_from_airport[destination['iata']]=d
     if d in distances:
         distances[d].append(destination['iata'])
@@ -367,10 +371,19 @@ for same_distance in sorted_distances:
             polygon=Polygon([XY_plane[airport] for airport in sorted_airports])
             perimeters.append(sorted_airports)
     else:
+        sorted_airports = unique_values(sorted_airports)
+        sorted_airports_outside_polygon=[]
+        for airport in sorted_airports:
+            if not polygon.is_point_inside(XY_plane[airport]):
+                sorted_airports_outside_polygon.append(airport)
+        if len(sorted_airports_outside_polygon)>0:
+            sorted_airports=sorted_airports_outside_polygon+[sorted_airports_outside_polygon[0]]
+        else:
+            continue
         new_perimeter=[]
         for airport in sorted_airports:
             if polygon.is_point_inside(XY_plane[airport]):
-                 continue
+                continue
             if len(new_perimeter)>0:
                 segment=Segment(XY_plane[new_perimeter[-1]], XY_plane[airport])
                 intersects=segment.intersectsPolygon(polygon)
@@ -459,12 +472,22 @@ def check_borders(locations):
         end=locations[(i+1)%len(locations)]
         locations_corrected.append(origin)
         
-        if origin[1]>175 and end[1]<-175:
-            locations_corrected.append([89.99, 179.99])
-            locations_corrected.append([89.99, -179.99])
-        if origin[1]<-175 and end[1]>175:
-            locations_corrected.append([89.99, -179.99])
-            locations_corrected.append([89.99, 179.99])
+        if origin[1]>160 and end[1]<-160:
+            previous=locations[(i-1)%len(locations)]
+            following=locations[(i+2)%len(locations)]
+            locations_corrected.append([previous[0]+(179.99999-previous[1])*(origin[0]-previous[0])/(origin[1]-previous[1]), 179.99999])
+            locations_corrected.append([89.99999, 179.99999])
+            locations_corrected.append([89.99999, -179.99999])
+            locations_corrected.append([end[0]+(-179.99999-end[1])*(following[0]-end[0])/(following[1]-end[1]), -179.99999])
+            
+        if origin[1]<-160 and end[1]>160:
+            previous=locations[(i-1)%len(locations)]
+            following=locations[(i+2)%len(locations)]
+            locations_corrected.append([previous[0]+(-179.99999-previous[1])*(origin[0]-previous[0])/(origin[1]-previous[1]), -179.99999])           
+            locations_corrected.append([89.99999, -179.99999])
+            locations_corrected.append([89.99999, 179.99999])
+            locations_corrected.append([end[0]+(179.99999-end[1])*(following[0]-end[0])/(following[1]-end[1]), 179.99999])
+            
     return locations_corrected
             
         
@@ -476,8 +499,9 @@ def print_shape(inner_perimeter, outter_perimeter, mapa, color, latitude_rad, lo
         folium.CircleMarker(location=coordinates_destination,
                               tooltip=airport,
                               radius=1,
-                              weight=5).add_to(mapa)
-        tmax=max(distance_from_airport[airport]*30,tmax)
+                              color=color,
+                              weight=2).add_to(mapa)
+        tmax=max(distance_from_airport[airport]*TIME_INTERVAL,tmax)
     locations=[]   
     for i in range(len(perimeter)):
         airport_origin=perimeter[i]
@@ -493,53 +517,47 @@ def print_shape(inner_perimeter, outter_perimeter, mapa, color, latitude_rad, lo
             (r, latitude2_rad, longitude2_rad)=cartesian2spherical(x2,y2,z2)
             locations.append([radian2degree(latitude2_rad),radian2degree(longitude2_rad)])
     locations=check_borders(locations)
+    hours, minutes= min2hours(tmax)
+    label=""
+    if hours==0:
+        label="<" +str(minutes)+"min"
+    elif minutes==0:
+        label="< "+str(hours)+"h"
+    else:
+        label="< "+str(hours)+"h "+str(minutes)+"min"
+        
     folium.Polygon(
         locations=locations,
         weight=0,
         fill_color=color,
         fill_opacity=0.3,
         fill=False,
-        tooltip=str(tmax)+"min"
+        tooltip=label
     ).add_to(mapa)
 
 mapa = folium.Map(location=coordinates_origin, zoom_start=4)
-# draw origin
-folium.CircleMarker(location=coordinates_origin,
-                        radius=2,
-                        color="#7aff33",
-                        weight=5).add_to(mapa)
+
+
 
 draw_parallels(mapa)
 draw_meridians(mapa)
 # draw_distances_to_origin(degree2radian(coordinates_origin[0]) ,degree2radian(coordinates_origin[1]), mapa)
+colors=['red','green','pink','orange','cyan','yellow','magenta','blue']
 
-colors=['red','blue','yellow','cyan','magenta']
-mapa = folium.Map(location=coordinates_origin, zoom_start=4)
 for i in range(len(perimeters)-1):
-    
     print_shape(perimeters[i], perimeters[i+1], mapa, colors[i%len(colors)],degree2radian(coordinates_origin[0]) ,degree2radian(coordinates_origin[1]),)
-    mapa.save("map"+str(i)+".html")
-
-# for perimeter in perimeters[::-1]:
-#     locations=[]
-#     for airport in perimeter:
-#         coordinates_destination=[float(data[airport]['latitude']), float(data[airport]['longitude'])]
-#         folium.CircleMarker(location=coordinates_destination,
-#                               tooltip=airport,
-#                               radius=1,
-#                               weight=5).add_to(mapa)
-#         locations.append(coordinates_destination)
-#         t=distance_from_airport[airport]*15  
-#     folium.Polygon(
-#         locations=locations,
-#         color='red', 
-#         weight=1,
-#         fill_color='red',
-#         fill_opacity=0.5,
-#         fill=False,
-#         tooltip=str(t)+"min"
-#     ).add_to(mapa)
-
-
-       
-# mapa.save("map.html")
+for perimeter in perimeters:
+    for airport in perimeter:
+        coordinates_destination=[float(data[airport]['latitude']), float(data[airport]['longitude'])]
+        folium.CircleMarker(location=coordinates_destination,
+                              tooltip=airport,
+                              radius=1,
+                              color='black',
+                              weight=2).add_to(mapa)
+# draw origin
+folium.CircleMarker(location=coordinates_origin,
+                      tooltip=origin_airport,
+                      radius=1,
+                      color='black',
+                      weight=10).add_to(mapa)
+mapa.save(ORIGIN_AIRPORT+".html")
