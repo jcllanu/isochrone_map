@@ -6,7 +6,6 @@ Created on Fri Dec  6 15:27:01 2024
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 import json
 import folium
 import matplotlib.cm as cm
@@ -14,6 +13,8 @@ import matplotlib.colors as colors
 import math
 import geometrical_utilities as geom
 import utilities as util
+import scipy.spatial as sci
+import matplotlib.pyplot as plt
 
         
 norm = colors.Normalize(vmin=0, vmax=600)
@@ -334,7 +335,55 @@ def get_projected_coordinates(data, origin):
         airport_from_coors[(u,v)]=destination['iata'] # Map the (u, v) coordinates to the destination airport's IATA code
             
     return  UV_plane, airport_from_coors    
-      
+
+def get_perimeters_convex_hull(distances, UV_plane, airport_from_coors):
+    """
+    Calculate the perimeters of the convex hulls formed by groups of airports 
+    with similar distances
+    Args:
+        distances (dict): A dictionary where the keys are distances and the values are lists of 
+                          airport identifiers corresponding to those distances.
+        UV_plane (dict): A dictionary mapping airport identifiers to their coordinates in a 
+                         UV-plane 
+        airport_from_coors (dict): A dictionary mapping coordinates in the UV-plane to airport 
+                                   identifiers.
+    Returns:
+        list: A list of perimeters, where each perimeter is a list of airport identifiers that 
+              form the convex hull
+    """
+    perimeters=[] # List to store the calculated perimeters
+    points=[] # List to store coordinates of points for the current convex hull calculation
+
+    # Sort distances in ascending order
+    sorted_distances = dict(sorted(distances.items(), key=lambda item: item[0]))
+    for same_distance in sorted_distances:
+        # Determine the set of points to consider for the current convex hull
+        if len(perimeters)>0:
+            # Add points from the previous perimeter and current distance group
+            points = [UV_plane[airport] for airport in perimeters[-1]] + [UV_plane[airport] for airport in distances[same_distance]]
+        else:
+            points = [UV_plane[airport] for airport in distances[same_distance]]
+        # Skip if there are insufficient points to form a convex hull
+        if len(points)<=2:
+            continue
+        # Calculate the convex hull of the current set of points
+        hull=sci.ConvexHull(points)
+        # Map the vertices of the hull back to airport identifiers
+        perimeter=[airport_from_coors[points[index]] for index in hull.vertices]
+        # Close the polygon loop
+        perimeters.append(perimeter+[perimeter[0]])
+        
+        # for perimeter in perimeters[-2:]:
+        #     x_coords=[UV_plane[airport][0] for airport in perimeter]
+        #     y_coords=[UV_plane[airport][1] for airport in perimeter] 
+        #     plt.plot(x_coords, y_coords)  
+        #     for i, label in enumerate(perimeter):
+        #         plt.text(x_coords[i], y_coords[i], label, fontsize=12, ha='right')
+        # plt.show()   
+    return perimeters
+    
+    
+    
 def get_perimeters(origin, distances, distance_from_airport, UV_plane, airport_from_coors):
     perimeters=[] # List to store the calculated perimeters
     polygon=[] # To store the current polygon for checking if the origin is inside and the intersections    
@@ -516,7 +565,7 @@ with open('airline_routes.json', 'r') as file:
     data = json.load(file)
 
 TIME_INTERVAL=15
-ORIGIN_AIRPORT='FRA'
+ORIGIN_AIRPORT='PEK'
 
 coordinates_origin=[float(data[ORIGIN_AIRPORT]['latitude']),float(data[ORIGIN_AIRPORT]['longitude'])]
 
@@ -529,12 +578,12 @@ draw_meridians(mapa)
 
 distances, distance_from_airport = group_destinations_by_time(data, ORIGIN_AIRPORT, TIME_INTERVAL)
 UV_plane, airport_from_coors = get_projected_coordinates(data, ORIGIN_AIRPORT)
-perimeters = get_perimeters(ORIGIN_AIRPORT, distances, distance_from_airport, UV_plane, airport_from_coors)
-
+perimeters = get_perimeters_convex_hull(distances, UV_plane, airport_from_coors)
+# perimeters = get_perimeters(ORIGIN_AIRPORT, distances, distance_from_airport, UV_plane, airport_from_coors)
 
 colors=['red','green','pink','orange','cyan','yellow','magenta','blue']
 for i in range(len(perimeters)-1):
     plot_shape(perimeters[i], perimeters[i+1], distance_from_airport, UV_plane, mapa, colors[i%len(colors)], coordinates_origin)
 
 draw_iata_codes(ORIGIN_AIRPORT, data, mapa)
-mapa.save(ORIGIN_AIRPORT+".html")
+mapa.save("maps\\"+ORIGIN_AIRPORT+".html")
