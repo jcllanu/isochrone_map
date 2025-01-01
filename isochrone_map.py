@@ -66,7 +66,7 @@ def draw_distances_to_origin(origin_coordinates_deg, mapa):
         origin_coordinates_deg (float, float): Latitude and longitud of the origin airport in degrees
         mapa (folium.Map): The folium map object to which the lines will be added.
     """
-    for i in range(10):
+    for i in range(19):
         x=math.cos(geom.degree2radian(i*10))
         coor=[]
         for angle in np.arange(0,2*math.pi,0.005):
@@ -579,7 +579,7 @@ with open('airline_routes.json', 'r') as file:
     data = json.load(file)
 
 TIME_INTERVAL=15
-ORIGIN_AIRPORT='FRA'
+ORIGIN_AIRPORT='CAI'
 
 coordinates_origin=[float(data[ORIGIN_AIRPORT]['latitude']),float(data[ORIGIN_AIRPORT]['longitude'])]
 
